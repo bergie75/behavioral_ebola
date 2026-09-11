@@ -45,19 +45,43 @@ else:
     fl = np.float32
     toint = np.int32
 
-mdict = {"beta": 1,
-    "inc_rate": 1,
-    "hosp_rate_C": 1,
-    "hosp_rate_I": 1,
-    "rec_rate_C": 1,
-    "rec_rate_I": 1,
-    "rec_rate_H": 1,
-    "safe_bury_rate": 1,
-    "hosp_death_rate": 1,
-    "death_rate_C": 1,
-    "death_rate_I": 1,
+# from paper source, key fixed periods for parameters, and derived values
+prop_hosp = 0.8
+prop_fatal = 0.81
+inc_period = 7.0
+ons_to_hosp = 5.0
+ons_to_death = 9.6
+ons_end_infect  = 10
+death_to_bury = 2
+
+gamma_i = 1/ons_end_infect
+gamma_h = 1/ons_to_hosp
+gamma_d = 1/ons_to_death
+gamma_f = 1/death_to_bury
+alpha_det = 1/inc_period
+
+delta_1 = prop_fatal*gamma_i/(prop_fatal*gamma_i+(1-prop_fatal)*gamma_d)
+theta_1 = prop_hosp*(gamma_i*(1-delta_1)+gamma_d*delta_1)/(prop_hosp*(gamma_i*(1-delta_1)+gamma_d*delta_1)+(1-prop_hosp)*gamma_h)
+
+# hosp improve
+hosp_imp = 0.7
+gamma_ih = gamma_i/hosp_imp
+gamma_dh = gamma_d*hosp_imp
+
+delta_2 = prop_fatal*gamma_ih/(prop_fatal*gamma_ih+(1-prop_fatal)*gamma_dh)
+
+mdict = {"inc_rate": alpha_det,
+    "hosp_rate_C": gamma_h*theta_1,
+    "hosp_rate_I": gamma_h*theta_1,
+    "rec_rate_C": gamma_i*(1-theta_1)*(1-delta_1),
+    "rec_rate_I": gamma_i*(1-theta_1)*(1-delta_1),
+    "rec_rate_H": gamma_ih*(1-delta_2),  # these could depend on a "hospital improvement rate"
+    "death_rate_C": delta_1*(1-theta_1)*gamma_d,
+    "death_rate_I": delta_1*(1-theta_1)*gamma_d,
+    "death_rate_H": gamma_dh*delta_2, # end above comment
+    "safe_bury_rate": gamma_f,
     "initInfected": 1.0,
-    "psize": 117233362.0}
+    "Population": 117233362.0}
 
 # improt case data
 cwd = os.getcwd()
@@ -86,9 +110,12 @@ sum_provinces = sum_provinces.reset_index()
 
 # number of days we must simulate with our model and all true case counts
 cum_case_values = np.array(sum_provinces["cumulative_confirmed_cases"][date_was_present])
+diff_case_values = jnp.diff(cum_case_values, prepend=0)
+diff_case_values = np.maximum(0, diff_case_values)  # needed to fix an input error, I think? One entry is -1
 num_days = len(sum_provinces)
-total_obs_cases = cum_case_values[-1]
-scaled_cum_cases = cum_case_values/total_obs_cases
+max_diff_cases = np.max(diff_case_values)
+scaled_diff_cases = diff_case_values/max_diff_cases
+#print(scaled_diff_cases)
 
 # # program flow controls and parameter setting
 # run_models = True
@@ -142,11 +169,10 @@ def ebola_rhs_scalar(y,t,p):
     sigma_dot = sigma_rate*(F/N-death_thresh)*sigma*(1-sigma)
     CumC_dot = E*conf_rate*inc_rate
     CumI_dot = E*(1-conf_rate)*inc_rate
-    return np.stack([S_dot, E_dot, C_dot, I_dot, H_dot, F_dot, R_dot, sigma_dot, CumC_dot, CumI_dot])
+    return jnp.stack([S_dot, E_dot, C_dot, I_dot, H_dot, F_dot, R_dot, sigma_dot, CumC_dot, CumI_dot])
 
 def model_behav_scalar(mdict):
     # all quantities determined in advance
-    beta = deterministic("beta", mdict["beta"])
     inc_rate = deterministic("inc_rate", mdict["inc_rate"])
 
     # hospitalization parameters
@@ -161,13 +187,15 @@ def model_behav_scalar(mdict):
     # death rates
     death_rate_C = deterministic("death_rate_C", mdict["death_rate_C"])
     death_rate_I = deterministic("death_rate_I", mdict["death_rate_I"])
-    death_rate_H = deterministic("hosp_death_rate", mdict["hosp_death_rate"])
-    
+    death_rate_H = deterministic("death_rate_H", mdict["death_rate_H"])
+
     # burial parameters
     safe_bury_rate = deterministic("safe_bury_rate", mdict["safe_bury_rate"])
 
     # to be fit
     # behavioral parameters
+    log_beta = sample("log_beta", dist.Normal(jnp.log(0.588), jnp.sqrt(jnp.log(2.191/0.588))))  #1995 DRC Ebola
+    beta = deterministic("beta", jnp.exp(log_beta))
     conf_rate = sample("conf_rate", dist.Beta(1,8))
     sigma_rate = sample("sigma_rate", dist.Uniform(0,10))
     death_thresh = sample("death_thresh", dist.Uniform(0,1))
@@ -184,20 +212,22 @@ def model_behav_scalar(mdict):
     f0 = deterministic("f0", 0.0)
     r0 = deterministic("r0", 0.0)
     log_init = sample("log_init", Norm(4.0, 4.0)) ##via Sasha
-    c0 = deterministic("c0", np.exp(log_init))
+    c0 = deterministic("c0", jnp.exp(log_init))
+    sigma0 = sample("sigma0", dist.Beta(1,1))
     psize = mdict['Population']
-    y0 = np.stack([psize - (e0 + i0 + c0 + h0 + f0 + r0), e0, c0, i0, h0, f0, r0, c0, i0])
+    y0 = jnp.array([psize - (e0 + i0 + c0 + h0 + f0 + r0), e0, c0, i0, h0, f0, r0, sigma0, c0, i0])
 
-    p = [beta, exp_alpha, hosp_alpha, dead_alpha, death_thresh, sigma_rate, inc_rate, death_rate_C, death_rate_I, hosp_rate_C, hosp_rate_I, death_rate_H, rec_rate_C, rec_rate_I, rec_rate_H, safe_bury_rate, conf_rate]
-    timepoints = jnp.array(range(0, num_days))
+    p = jnp.stack([beta, exp_alpha, hosp_alpha, dead_alpha, death_thresh, sigma_rate, inc_rate, death_rate_C, death_rate_I, hosp_rate_C, hosp_rate_I, death_rate_H, rec_rate_C, rec_rate_I, rec_rate_H, safe_bury_rate, conf_rate])
+    timepoints = jnp.array([float(x) for x in range(0, num_days)])
     pred_cum = odeint(ebola_rhs_scalar, y0, timepoints, p)[:,8]
-    pred_at_known_days = pred_cum[date_was_present]
-    scaled_pred_known_days = pred_at_known_days/total_obs_cases
+    pred_cum_known_days = pred_cum[date_was_present]
+    pred_diff_known_days = jnp.diff(pred_cum_known_days, prepend=0)
+    scaled_pred_known_days = pred_diff_known_days/max_diff_cases
 
     nu = sample("nu", dist.Gamma(4.0,1.0)) ## df should be < 10 for robustness
     sigma = sample("sigma", dist.Exponential(1.0))
     eps = 1.0 / psize
-    sample("daily", dist.StudentT(nu, np.log(eps+scaled_pred_known_days), sigma), obs=np.log(eps+scaled_cum_cases))
+    sample("daily", dist.StudentT(nu, jnp.log(eps+scaled_pred_known_days), sigma), obs=jnp.log(eps+scaled_diff_cases))
 
 if __name__ == "__main__":
     runs_behav = []
