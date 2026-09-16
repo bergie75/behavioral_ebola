@@ -1,15 +1,26 @@
+import numpyro as pn
 import jax
+import arviz as az
+import matplotlib.pyplot as plt
+
+# config information, taken directly from Sasha's code at the moment
+# set numpyro platform to cpu because I don't have the right kind of gpu
+pn.set_platform("cpu")
+
+# tell numpyro to use mult cpu cores (this many chains can run in parallel)
+pn.set_host_device_count(4)
+
 import jax.numpy as jnp
 from jax.numpy import array as arr
 from jax import lax, random
 from jax.experimental.ode import odeint
 from jax.scipy.special import logsumexp
 from jax.scipy.special import expit as logistic
-from jax.scipy.special import logit
-from jax.scipy.special import gammaln
-from jax.scipy import stats
+# from jax.scipy.special import logit
+# from jax.scipy.special import gammaln
+# from jax.scipy import stats
 
-import numpyro as pn
+
 from numpyro import sample
 from numpyro import deterministic
 import numpyro.distributions as dist
@@ -26,13 +37,6 @@ import warnings
 import os
 import pandas as pd
 import dill
-
-# config information, taken directly from Sasha's code at the moment
-# set numpyro platform to cpu because I don't have the right kind of gpu
-pn.set_platform("cpu")
-
-# tell numpyro to use mult cpu cores (this many chains can run in parallel)
-pn.set_host_device_count(4)
 
 # jax wants float32's by default, but sometimes it helps to use higher-precision floats:
 HIPREC = True
@@ -133,7 +137,7 @@ def key_gen(seed = random.PRNGKey(8927)):
 key = key_gen()
 
 def store(obj, name):
-    cwd = os.getcwd()
+    print("fc")
     with open(os.path.join(cwd, "behavioral_ebola", "output", f'{name}.dill'), 'wb') as f:
         dill.dump(obj, f)
 
@@ -211,8 +215,8 @@ def model_behav_scalar(mdict):
     h0 = deterministic("h0", 0.0)
     f0 = deterministic("f0", 0.0)
     r0 = deterministic("r0", 0.0)
-    log_init = sample("log_init", Norm(4.0, 4.0)) ##via Sasha
-    c0 = deterministic("c0", jnp.exp(log_init))
+    log_init = sample("log_init", dist.Beta(1.0,3.0))
+    c0 = deterministic("c0", jnp.exp(4*log_init))
     sigma0 = sample("sigma0", dist.Beta(1,1))
     psize = mdict['Population']
     y0 = jnp.array([psize - (e0 + i0 + c0 + h0 + f0 + r0), e0, c0, i0, h0, f0, r0, sigma0, c0, i0])
@@ -229,12 +233,44 @@ def model_behav_scalar(mdict):
     eps = 1.0 / psize
     sample("daily", dist.StudentT(nu, jnp.log(eps+scaled_pred_known_days), sigma), obs=jnp.log(eps+scaled_diff_cases))
 
+def summarize(run_name):
+    runs = load(run_name)
+    idata = az.from_numpyro(posterior=runs, log_likelihood=True)
+    print("Parameters")
+    to_summ = ["beta", "c0", "conf_rate", "dead_alpha", "death_thresh", "exp_alpha", "hosp_alpha", "log_beta", "log_init", "sigma0", "sigma_rate"]
+    print(az.summary(idata, group="posterior", var_names=to_summ))
+    print("\nObservations")
+    print(az.summary(idata, group="log_likelihood"))
+
+def plot_mean_results(run_name, mdict):
+    # acquire needed data to reconstruct results
+    psize = mdict['Population']
+    eps = 1.0/psize
+
+    runs = load(run_name)
+    idata = az.from_numpyro(posterior=runs, log_likelihood=True)
+    logged_scaled_pred_known_days = jnp.array(idata.log_likelihood["daily"].mean(dim=("chain", "draw")).values)
+    scaled_pred_known_days = jnp.exp(logged_scaled_pred_known_days-eps)
+    pred_diff_known_days = scaled_pred_known_days*max_diff_cases
+    pred_cum_known_days = jnp.cumsum(pred_diff_known_days)
+
+    plt.plot(cum_case_values, label="data")
+    plt.plot(pred_cum_known_days, label="predicted")
+    plt.legend()
+    plt.show()
+
 if __name__ == "__main__":
+    import datetime
+    run_day = str(datetime.datetime.now())
+    run_day = run_day.replace(":","_").replace(".","_").replace(" ","_").replace("-","_")
     runs_behav = []
     runs_behav.append( 
         MCMC(NUTS(model_behav_scalar, 
-        target_accept_prob=0.9, dense_mass=True, init_strategy=pn.infer.init_to_sample), 
-        num_warmup=2500, num_samples=5000, num_chains=4)
+        target_accept_prob=0.9, dense_mass=True, init_strategy=pn.infer.init_to_median), 
+        num_warmup=2500, num_samples=5000, num_chains=4, chain_method="parallel")
     )
     runs_behav[-1].run(key(), mdict)
-    store(runs_behav[-1],'behav_5000x4_'+str(len(runs_behav)-1))
+    savefile = run_day+"_"+str(len(runs_behav)-1)
+    store(runs_behav[-1], savefile)
+    # summarize("2026_09_15_11_39_41_6636830")
+    # plot_mean_results("behav_5000x4_0", mdict)

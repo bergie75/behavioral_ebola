@@ -1,7 +1,8 @@
-import pandas as pd
-import os
-import numpy as np
+import numpyro
 
+numpyro.set_host_device_count(4)  # before JAX is initialized
 
-a=np.array([1,2,3,4,5])
-print(a[[True,True,False,False,True]])
+import jax
+from numpyro.infer import MCMC, NUTS
+
+print(jax.local_device_count())  # should print 4
