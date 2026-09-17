@@ -259,18 +259,53 @@ def plot_mean_results(run_name, mdict):
     plt.legend()
     plt.show()
 
+def calc_basic_rep(run_name):
+    # retrieve sample information
+    runs = load(run_name)
+    samples = runs.get_samples()
+    medians = {name: np.median(values, axis=0) for name, values in samples.items()}
+
+    #print(medians)
+
+    save_rep = os.path.join(os.getcwd(), "behavioral_ebola", "output", "basic_rep.dill")
+    with open(save_rep, "rb") as file:
+        basic_rep_num = dill.load(file)
+
+    mdict_to_syms = {
+    "gamma": "inc_rate",
+    "eta_C": "hosp_rate_C",
+    "eta_I": "hosp_rate_I",
+    "rho_C": "rec_rate_C",
+    "rho_I": "rec_rate_I",
+    "rho_H": "rec_rate_H",
+    "d_C": "death_rate_C",
+    "d_I": "death_rate_I",
+    "d_H": "death_rate_H",
+    "omega": "safe_bury_rate",
+    "beta": "beta",
+    "alpha_E": "exp_alpha",
+    "theta": "conf_rate",
+    "alpha_H": "hosp_alpha",
+    "alpha_F": "dead_alpha",
+    "sigma": "sigma"}
+
+    sub_vals = {x:medians[mdict_to_syms[str(x)]] for x in basic_rep_num.free_symbols}
+    sub_vals["sigma"] = 0
+    print(f"Basic reproduction number from medians: {basic_rep_num.subs(sub_vals):.4f}")
+
+
 if __name__ == "__main__":
-    import datetime
-    run_day = str(datetime.datetime.now())
-    run_day = run_day.replace(":","_").replace(".","_").replace(" ","_").replace("-","_")
-    runs_behav = []
-    runs_behav.append( 
-        MCMC(NUTS(model_behav_scalar, 
-        target_accept_prob=0.9, dense_mass=True, init_strategy=pn.infer.init_to_median), 
-        num_warmup=2500, num_samples=5000, num_chains=4, chain_method="parallel")
-    )
-    runs_behav[-1].run(key(), mdict)
-    savefile = run_day+"_"+str(len(runs_behav)-1)
-    store(runs_behav[-1], savefile)
-    # summarize("2026_09_15_11_39_41_6636830")
+    # import datetime
+    # run_day = str(datetime.datetime.now())
+    # run_day = run_day.replace(":","_").replace(".","_").replace(" ","_").replace("-","_")
+    # runs_behav = []
+    # runs_behav.append( 
+    #     MCMC(NUTS(model_behav_scalar, 
+    #     target_accept_prob=0.9, dense_mass=True, init_strategy=pn.infer.init_to_median), 
+    #     num_warmup=2500, num_samples=5000, num_chains=4, chain_method="parallel")
+    # )
+    # runs_behav[-1].run(key(), mdict)
+    # savefile = run_day+"_"+str(len(runs_behav)-1)
+    # store(runs_behav[-1], savefile)
+    calc_basic_rep("behav_5000x4_0")
     # plot_mean_results("behav_5000x4_0", mdict)
