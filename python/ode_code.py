@@ -201,7 +201,8 @@ def model_behav_scalar(mdict):
     log_beta = sample("log_beta", dist.Normal(jnp.log(0.588), jnp.sqrt(jnp.log(2.191/0.588))))  #1995 DRC Ebola
     beta = deterministic("beta", jnp.exp(log_beta))
     conf_rate = sample("conf_rate", dist.Beta(1,8))
-    sigma_rate = sample("sigma_rate", dist.Uniform(0,10))
+    #sigma_rate = sample("sigma_rate", dist.Uniform(0,10))
+    sigma_rate = deterministic("sample_rate", 0.0)
     death_thresh = sample("death_thresh", dist.Uniform(0,1))
 
     # infectiousness of other states
@@ -217,7 +218,8 @@ def model_behav_scalar(mdict):
     r0 = deterministic("r0", 0.0)
     log_init = sample("log_init", dist.Beta(1.0,3.0))
     c0 = deterministic("c0", jnp.exp(4*log_init))
-    sigma0 = sample("sigma0", dist.Beta(1,1))
+    #sigma0 = sample("sigma0", dist.Beta(1,1))
+    sigma0 = deterministic("sigma0", 0.0)
     psize = mdict['Population']
     y0 = jnp.array([psize - (e0 + i0 + c0 + h0 + f0 + r0), e0, c0, i0, h0, f0, r0, sigma0, c0, i0])
 
@@ -295,17 +297,17 @@ def calc_basic_rep(run_name):
 
 
 if __name__ == "__main__":
-    # import datetime
-    # run_day = str(datetime.datetime.now())
-    # run_day = run_day.replace(":","_").replace(".","_").replace(" ","_").replace("-","_")
-    # runs_behav = []
-    # runs_behav.append( 
-    #     MCMC(NUTS(model_behav_scalar, 
-    #     target_accept_prob=0.9, dense_mass=True, init_strategy=pn.infer.init_to_median), 
-    #     num_warmup=2500, num_samples=5000, num_chains=4, chain_method="parallel")
-    # )
-    # runs_behav[-1].run(key(), mdict)
-    # savefile = run_day+"_"+str(len(runs_behav)-1)
-    # store(runs_behav[-1], savefile)
-    calc_basic_rep("behav_5000x4_0")
+    import datetime
+    run_day = str(datetime.datetime.now())
+    run_day = run_day.replace(":","_").replace(".","_").replace(" ","_").replace("-","_")
+    runs_behav = []
+    runs_behav.append( 
+        MCMC(NUTS(model_behav_scalar, 
+        target_accept_prob=0.9, dense_mass=True, init_strategy=pn.infer.init_to_median), 
+        num_warmup=3500, num_samples=5000, num_chains=4, chain_method="parallel")
+    )
+    runs_behav[-1].run(key(), mdict)
+    savefile = run_day+"_"+str(len(runs_behav)-1)
+    store(runs_behav[-1], savefile)
+    # calc_basic_rep("behav_5000x4_0")
     # plot_mean_results("behav_5000x4_0", mdict)

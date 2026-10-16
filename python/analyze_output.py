@@ -1,7 +1,8 @@
 import arviz as az
-from ode_code import load
-from numpyro import sample
-from numpyro import deterministic
+from ode_code import load, calc_basic_rep, plot_mean_results, mdict
 
-runs = load("behav_5000x4_0")
-print(az.summary(az.from_numpyro(runs)))
+run_name = "2026_10_14_16_50_06_776462_0"
+runs = load(run_name)
+# print(az.summary(az.from_numpyro(runs)))
+calc_basic_rep(run_name)
+plot_mean_results(run_name, mdict)
